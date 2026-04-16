@@ -1,60 +1,54 @@
-#ifndef EXTENSIBLE_HASH_FILE_H
-#define EXTENSIBLE_HASH_FILE_H
+#ifndef HASH_EXTENSIBLE_H
+#define HASH_EXTENSIBLE_H
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
-/*
- * Tipo opaco para a tabela hash extensível.
- */
-typedef void *ExtHash;
+#ifdef __cplusplus
+extern "C"
+{
+#endif
 
-/*
- * Cria um novo arquivo de hash extensível.
- * bucket_size: número máximo de registros por bucket
- */
-ExtHash ehf_create(const char *filename, size_t bucket_size);
+    typedef void *HashExtFile;
 
-/*
- * Abre um arquivo de hash existente.
- */
-ExtHash ehf_open(const char *filename);
+    typedef enum
+    {
+        HEF_OK = 0,
+        HEF_ERR_INVALID_ARG = -1,
+        HEF_ERR_IO = -2,
+        HEF_ERR_NOT_FOUND = -3,
+        HEF_ERR_DUPLICATE_KEY = -4,
+        HEF_ERR_CORRUPTED = -5,
+        HEF_ERR_NO_MEMORY = -6
+    } HashExtStatus;
 
-/*
- * Fecha a estrutura e libera memória.
- */
-void ehf_close(ExtHash h);
+    const char *hef_status_str(HashExtStatus status);
 
-/*
- * Insere um par chave-valor.
- * Retorna 1 se inseriu, 0 se chave já existe, -1 erro.
- */
-int ehf_insert(ExtHash h, const char *key, const void *value, size_t value_size);
+    HashExtStatus hef_create(const char *path,
+                             uint32_t bucket_capacity,
+                             uint32_t value_size,
+                             uint32_t initial_global_depth,
+                             HashExtFile *out_hf);
 
-/*
- * Busca um valor pela chave.
- * Retorna 1 se encontrou, 0 se não, -1 erro.
- */
-int ehf_search(ExtHash h, const char *key, void *value_out, size_t *value_size);
+    HashExtStatus hef_open(const char *path, HashExtFile *out_hf);
+    HashExtStatus hef_close(HashExtFile *io_hf);
+    HashExtStatus hef_flush(HashExtFile hf);
 
-/*
- * Remove uma chave.
- * Retorna 1 se removeu, 0 se não existe, -1 erro.
- */
-int ehf_remove(ExtHash h, const char *key);
+    HashExtStatus hef_insert(HashExtFile hf, const char *key, const void *value);
+    HashExtStatus hef_get(HashExtFile hf, const char *key, void *out_value);
+    HashExtStatus hef_update(HashExtFile hf, const char *key, const void *value);
+    HashExtStatus hef_remove(HashExtFile hf, const char *key, void *out_removed_value);
+    HashExtStatus hef_contains(HashExtFile hf, const char *key, bool *out_contains);
 
-/*
- * Verifica se uma chave existe.
- */
-int ehf_exists(ExtHash h, const char *key);
+    HashExtStatus hef_size(HashExtFile hf, uint32_t *out_size);
+    HashExtStatus hef_value_size(HashExtFile hf, uint32_t *out_value_size);
+    HashExtStatus hef_global_depth(HashExtFile hf, uint32_t *out_depth);
+    HashExtStatus hef_bucket_count(HashExtFile hf, uint32_t *out_count);
+    HashExtStatus hef_directory_entry_count(HashExtFile hf, uint32_t *out_count);
 
-/*
- * Retorna a profundidade global (para testes).
- */
-int ehf_global_depth(ExtHash h);
-
-/*
- * Retorna quantidade de buckets (para testes).
- */
-int ehf_bucket_count(ExtHash h);
+#ifdef __cplusplus
+}
+#endif
 
 #endif
