@@ -173,14 +173,14 @@ static void calcular_ponto_endereco(double x,
     {
     case 'N':
     case 'n':
-        *px = x + w - num;
-        *py = y;
+        *px = x + num;
+        *py = y + h;
         break;
 
     case 'S':
     case 's':
-        *px = x + w - num;
-        *py = y + h;
+        *px = x + num;
+        *py = y;
         break;
 
     case 'L':
@@ -221,9 +221,36 @@ static void escrever_dados_habitante(FILE *txt, const HabitanteRecord *h)
     }
 }
 
-static void svg_inicio(FILE *svg)
+static int svg_inicio(FILE *svg, HashExtFile hf_quadras)
 {
-    fprintf(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n");
+    double min_x;
+    double min_y;
+    double max_x;
+    double max_y;
+    double width;
+    double height;
+
+    if (geo_obter_limites_quadras(hf_quadras, &min_x, &min_y, &max_x, &max_y) != GEO_OK)
+        return QRY_ERR_HASH;
+
+    width = max_x - min_x;
+    height = max_y - min_y;
+
+    if (width <= 0.0)
+        width = 100.0;
+    if (height <= 0.0)
+        height = 100.0;
+
+    if (fprintf(svg,
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" "
+                "width=\"%.2lf\" height=\"%.2lf\" viewBox=\"%.2lf %.2lf %.2lf %.2lf\">\n",
+                width, height, min_x, min_y, width, height) < 0)
+        return QRY_ERR_IO;
+
+    if (geo_escrever_quadras_svg(svg, hf_quadras) != GEO_OK)
+        return QRY_ERR_HASH;
+
+    return QRY_OK;
 }
 
 static void svg_fim(FILE *svg)
@@ -231,14 +258,38 @@ static void svg_fim(FILE *svg)
     fprintf(svg, "</svg>\n");
 }
 
+static int svg_copiar_conteudo(FILE *dest, FILE *src)
+{
+    int ch;
+
+    if (dest == NULL || src == NULL)
+        return QRY_ERR_INVALID_ARG;
+
+    if (fflush(src) != 0)
+        return QRY_ERR_IO;
+
+    rewind(src);
+
+    while ((ch = fgetc(src)) != EOF)
+    {
+        if (fputc(ch, dest) == EOF)
+            return QRY_ERR_IO;
+    }
+
+    if (ferror(src))
+        return QRY_ERR_IO;
+
+    return QRY_OK;
+}
+
 static void svg_cruz(FILE *svg, double x, double y)
 {
     fprintf(svg,
             "<line x1=\"%.2lf\" y1=\"%.2lf\" x2=\"%.2lf\" y2=\"%.2lf\" stroke=\"red\" stroke-width=\"2\" />\n",
-            x - 4, y - 4, x + 4, y + 4);
+            x - 5, y, x + 5, y);
     fprintf(svg,
             "<line x1=\"%.2lf\" y1=\"%.2lf\" x2=\"%.2lf\" y2=\"%.2lf\" stroke=\"red\" stroke-width=\"2\" />\n",
-            x - 4, y + 4, x + 4, y - 4);
+            x, y - 5, x, y + 5);
 }
 
 static void svg_quadrado_mudanca(FILE *svg, double x, double y, const char *cpf)
@@ -444,6 +495,7 @@ int processar_qry(const char *qry_path,
     FILE *qry;
     FILE *txt;
     FILE *svg;
+    FILE *svg_final;
     char linha[QRY_MAX_LINE];
     char comando[32];
     int status = QRY_OK;
@@ -463,15 +515,13 @@ int processar_qry(const char *qry_path,
         return QRY_ERR_IO;
     }
 
-    svg = fopen(svg_path, "w");
+    svg = tmpfile();
     if (svg == NULL)
     {
         fclose(txt);
         fclose(qry);
         return QRY_ERR_IO;
     }
-
-    svg_inicio(svg);
 
     while (fgets(linha, sizeof(linha), qry) != NULL)
     {
@@ -508,7 +558,23 @@ int processar_qry(const char *qry_path,
             break;
     }
 
-    svg_fim(svg);
+    if (status == QRY_OK)
+    {
+        svg_final = fopen(svg_path, "w");
+        if (svg_final == NULL)
+            status = QRY_ERR_IO;
+        else
+        {
+            status = svg_inicio(svg_final, hf_quadras);
+            if (status == QRY_OK)
+                status = svg_copiar_conteudo(svg_final, svg);
+            if (status == QRY_OK)
+                svg_fim(svg_final);
+
+            if (fclose(svg_final) != 0 && status == QRY_OK)
+                status = QRY_ERR_IO;
+        }
+    }
 
     if (fclose(svg) != 0 && status == QRY_OK)
         status = QRY_ERR_IO;

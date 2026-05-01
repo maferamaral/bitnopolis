@@ -23,6 +23,21 @@ typedef struct
     int removida;
 } GeoQuadraRecord;
 
+typedef struct
+{
+    int tem_limites;
+    double min_x;
+    double min_y;
+    double max_x;
+    double max_y;
+} GeoLimitesCtx;
+
+typedef struct
+{
+    FILE *svg;
+    int status;
+} GeoSvgCtx;
+
 static void geo_trim_newline(char *s)
 {
     size_t n;
@@ -72,13 +87,77 @@ static void geo_copy_string(char *dest, size_t dest_size, const char *src)
     dest[dest_size - 1] = '\0';
 }
 
-static int geo_svg_begin(FILE *svg)
+static void geo_atualizar_limites(GeoLimitesCtx *ctx,
+                                  double min_x,
+                                  double min_y,
+                                  double max_x,
+                                  double max_y)
 {
+    if (!ctx->tem_limites)
+    {
+        ctx->tem_limites = 1;
+        ctx->min_x = min_x;
+        ctx->min_y = min_y;
+        ctx->max_x = max_x;
+        ctx->max_y = max_y;
+        return;
+    }
+
+    if (min_x < ctx->min_x)
+        ctx->min_x = min_x;
+    if (min_y < ctx->min_y)
+        ctx->min_y = min_y;
+    if (max_x > ctx->max_x)
+        ctx->max_x = max_x;
+    if (max_y > ctx->max_y)
+        ctx->max_y = max_y;
+}
+
+static int geo_cb_limites(const char *key, const void *value, void *user_data)
+{
+    GeoLimitesCtx *ctx = (GeoLimitesCtx *)user_data;
+    const GeoQuadraRecord *q = (const GeoQuadraRecord *)value;
+    double margem;
+
+    (void)key;
+
+    if (q->removida)
+        return 0;
+
+    margem = q->sw + 12.0;
+    geo_atualizar_limites(ctx,
+                          q->x - margem,
+                          q->y - margem,
+                          q->x + q->w + margem,
+                          q->y + q->h + margem);
+
+    return 0;
+}
+
+static int geo_svg_begin(FILE *svg,
+                         double min_x,
+                         double min_y,
+                         double max_x,
+                         double max_y)
+{
+    double width;
+    double height;
+
     if (svg == NULL)
         return GEO_ERR_INVALID_ARG;
 
+    width = max_x - min_x;
+    height = max_y - min_y;
+
+    if (width <= 0.0)
+        width = 100.0;
+    if (height <= 0.0)
+        height = 100.0;
+
     if (fprintf(svg,
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n") < 0)
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" "
+                "width=\"%.2lf\" height=\"%.2lf\" viewBox=\"%.2lf %.2lf %.2lf %.2lf\">\n",
+                width, height, min_x, min_y, width, height) < 0)
         return GEO_ERR_IO;
 
     return GEO_OK;
@@ -120,9 +199,102 @@ static int geo_svg_draw_quadra(FILE *svg, const GeoQuadraRecord *q)
     return GEO_OK;
 }
 
+static int geo_cb_draw_quadra(const char *key, const void *value, void *user_data)
+{
+    GeoSvgCtx *ctx = (GeoSvgCtx *)user_data;
+    const GeoQuadraRecord *q = (const GeoQuadraRecord *)value;
+
+    (void)key;
+
+    if (q->removida)
+        return 0;
+
+    ctx->status = geo_svg_draw_quadra(ctx->svg, q);
+
+    return ctx->status == GEO_OK ? 0 : 1;
+}
+
+int geo_escrever_quadras_svg(FILE *svg, HashExtFile hf_quadras)
+{
+    GeoSvgCtx ctx;
+    HashExtStatus st;
+
+    if (svg == NULL || hf_quadras == NULL)
+        return GEO_ERR_INVALID_ARG;
+
+    ctx.svg = svg;
+    ctx.status = GEO_OK;
+
+    st = hef_foreach(hf_quadras, geo_cb_draw_quadra, &ctx);
+    if (st != HEF_OK)
+        return GEO_ERR_HASH;
+    if (ctx.status != GEO_OK)
+        return ctx.status;
+
+    return GEO_OK;
+}
+
+static int geo_svg_write_quadras(FILE *svg, HashExtFile hf_quadras)
+{
+    double min_x;
+    double min_y;
+    double max_x;
+    double max_y;
+    int status;
+
+    status = geo_obter_limites_quadras(hf_quadras, &min_x, &min_y, &max_x, &max_y);
+    if (status != GEO_OK)
+        return status;
+
+    status = geo_svg_begin(svg, min_x, min_y, max_x, max_y);
+    if (status != GEO_OK)
+        return status;
+
+    status = geo_escrever_quadras_svg(svg, hf_quadras);
+    if (status != GEO_OK)
+        return status;
+
+    return geo_svg_end(svg);
+}
+
 size_t geo_quadra_record_size(void)
 {
     return sizeof(GeoQuadraRecord);
+}
+
+int geo_obter_limites_quadras(HashExtFile hf_quadras,
+                              double *out_min_x,
+                              double *out_min_y,
+                              double *out_max_x,
+                              double *out_max_y)
+{
+    GeoLimitesCtx ctx;
+    HashExtStatus st;
+
+    if (hf_quadras == NULL || out_min_x == NULL || out_min_y == NULL ||
+        out_max_x == NULL || out_max_y == NULL)
+        return GEO_ERR_INVALID_ARG;
+
+    memset(&ctx, 0, sizeof(ctx));
+
+    st = hef_foreach(hf_quadras, geo_cb_limites, &ctx);
+    if (st != HEF_OK)
+        return GEO_ERR_HASH;
+
+    if (!ctx.tem_limites)
+    {
+        ctx.min_x = 0.0;
+        ctx.min_y = 0.0;
+        ctx.max_x = 100.0;
+        ctx.max_y = 100.0;
+    }
+
+    *out_min_x = ctx.min_x;
+    *out_min_y = ctx.min_y;
+    *out_max_x = ctx.max_x;
+    *out_max_y = ctx.max_y;
+
+    return GEO_OK;
 }
 
 int geo_processar_arquivo(const char *geo_path, HashExtFile hf_quadras, const char *svg_path)
@@ -145,24 +317,6 @@ int geo_processar_arquivo(const char *geo_path, HashExtFile hf_quadras, const ch
     if (geo == NULL)
         return GEO_ERR_IO;
 
-    if (svg_path != NULL && svg_path[0] != '\0')
-    {
-        svg = fopen(svg_path, "w");
-        if (svg == NULL)
-        {
-            fclose(geo);
-            return GEO_ERR_IO;
-        }
-
-        status = geo_svg_begin(svg);
-        if (status != GEO_OK)
-        {
-            fclose(svg);
-            fclose(geo);
-            return status;
-        }
-    }
-
     while (fgets(line, sizeof(line), geo) != NULL)
     {
         char comando[16];
@@ -180,18 +334,18 @@ int geo_processar_arquivo(const char *geo_path, HashExtFile hf_quadras, const ch
 
         if (strcmp(comando, "cq") == 0)
         {
-            double sw;
+            char sw_text[32];
             char cfill[GEO_COLOR_LEN];
             char cstrk[GEO_COLOR_LEN];
 
-            if (sscanf(p, "%*s %lf %31s %31s", &sw, cfill, cstrk) != 3)
+            if (sscanf(p, "%*s %31s %31s %31s", sw_text, cfill, cstrk) != 3)
             {
                 fprintf(stderr, "Erro no .geo linha %d: comando cq invalido\n", line_number);
                 status = GEO_ERR_PARSE;
                 break;
             }
 
-            current_sw = sw;
+            current_sw = strtod(sw_text, NULL);
             geo_copy_string(current_cfill, sizeof(current_cfill), cfill);
             geo_copy_string(current_cstrk, sizeof(current_cstrk), cstrk);
         }
@@ -231,12 +385,6 @@ int geo_processar_arquivo(const char *geo_path, HashExtFile hf_quadras, const ch
                 break;
             }
 
-            if (svg != NULL)
-            {
-                status = geo_svg_draw_quadra(svg, &q);
-                if (status != GEO_OK)
-                    break;
-            }
         }
         else
         {
@@ -244,12 +392,15 @@ int geo_processar_arquivo(const char *geo_path, HashExtFile hf_quadras, const ch
         }
     }
 
-    if (svg != NULL)
+    if (status == GEO_OK && svg_path != NULL && svg_path[0] != '\0')
     {
-        if (status == GEO_OK)
-            status = geo_svg_end(svg);
+        svg = fopen(svg_path, "w");
+        if (svg == NULL)
+            status = GEO_ERR_IO;
+        else
+            status = geo_svg_write_quadras(svg, hf_quadras);
 
-        if (fclose(svg) != 0 && status == GEO_OK)
+        if (svg != NULL && fclose(svg) != 0 && status == GEO_OK)
             status = GEO_ERR_IO;
     }
 
