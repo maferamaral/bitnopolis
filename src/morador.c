@@ -16,7 +16,7 @@ typedef struct
     char cep[32];
     char face;
     int num;
-    char compl[64];
+    char complemento[64];
 
 } MoradorImpl;
 
@@ -89,7 +89,7 @@ void morador_set_endereco(Morador m,
                           const char *cep,
                           char face,
                           int num,
-                          const char *compl)
+                          const char *complemento)
 {
     MoradorImpl *mm = (MoradorImpl *)m;
 
@@ -99,8 +99,8 @@ void morador_set_endereco(Morador m,
     mm->face = face;
     mm->num = num;
 
-    strncpy(mm->compl, compl, 63);
-    mm->compl[63] = '\0';
+    strncpy(mm->complemento, complemento, 63);
+    mm->complemento[63] = '\0';
 
     mm->temEndereco = 1;
 }
@@ -127,7 +127,7 @@ int morador_get_num(Morador m)
 
 const char *morador_get_compl(Morador m)
 {
-    return ((MoradorImpl *)m)->compl;
+    return ((MoradorImpl *)m)->complemento;
 }
 
 /* ações */

@@ -23,7 +23,7 @@ void morador_set_endereco(Morador m,
                           const char *cep,
                           char face,
                           int num,
-                          const char *compl);
+                          const char *complemento);
 
 int morador_tem_endereco(Morador m);
 
