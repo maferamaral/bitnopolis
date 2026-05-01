@@ -51,7 +51,7 @@ extern "C"
     HashExtStatus hef_global_depth(HashExtFile hf, uint32_t *out_depth);
     HashExtStatus hef_bucket_count(HashExtFile hf, uint32_t *out_count);
     HashExtStatus hef_directory_entry_count(HashExtFile hf, uint32_t *out_count);
-
+    HashExtStatus hef_dump(HashExtFile hf, const char *path);
 #ifdef __cplusplus
 }
 #endif

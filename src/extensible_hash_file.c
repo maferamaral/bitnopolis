@@ -1252,3 +1252,100 @@ HashExtStatus hef_foreach(HashExtFile hf_ptr, HefForeachFn callback, void *user_
 
     return HEF_OK;
 }
+HashExtStatus hef_dump(HashExtFile hf_ptr, const char *path)
+{
+    HefHandle *hf = (HefHandle *)hf_ptr;
+    FILE *out;
+    uint32_t i;
+
+    if (!hf || !path)
+        return HEF_ERR_INVALID_ARG;
+
+    out = fopen(path, "w");
+    if (!out)
+        return HEF_ERR_IO;
+
+    /* HEADER */
+    fprintf(out, "===== HEADER =====\n");
+    fprintf(out, "global_depth: %u\n", hf->header.global_depth);
+    fprintf(out, "bucket_count: %u\n", hf->header.bucket_count);
+    fprintf(out, "directory_entries: %u\n", hf->header.directory_entry_count);
+    fprintf(out, "value_size: %u\n", hf->header.value_size);
+    fprintf(out, "next_bucket_offset: %llu\n\n",
+            (unsigned long long)hf->header.next_bucket_offset);
+
+    /* DIRECTORY */
+    fprintf(out, "===== DIRECTORY =====\n");
+    for (i = 0; i < hf->header.directory_entry_count; i++)
+    {
+        fprintf(out, "[%u] -> %llu\n",
+                i,
+                (unsigned long long)hf->directory[i]);
+    }
+    fprintf(out, "\n");
+
+    /* BUCKETS */
+    fprintf(out, "===== BUCKETS =====\n");
+
+    uint64_t *visitados = calloc(hf->header.bucket_count, sizeof(uint64_t));
+    uint32_t visitados_count = 0;
+
+    for (i = 0; i < hf->header.directory_entry_count; i++)
+    {
+        uint64_t offset = hf->directory[i];
+        uint32_t j;
+        int ja_foi = 0;
+
+        for (j = 0; j < visitados_count; j++)
+        {
+            if (visitados[j] == offset)
+            {
+                ja_foi = 1;
+                break;
+            }
+        }
+
+        if (ja_foi)
+            continue;
+
+        visitados[visitados_count++] = offset;
+
+        HefBucketHeader bh;
+
+        if (hef_bucket_read_header(hf, offset, &bh) != HEF_OK)
+            continue;
+
+        fprintf(out, "\nBUCKET @ %llu\n", (unsigned long long)offset);
+        fprintf(out, "  local_depth: %u\n", bh.local_depth);
+        fprintf(out, "  count: %u\n", bh.count);
+
+        for (j = 0; j < bh.count; j++)
+        {
+            uint8_t *buffer = malloc(hf->record_size);
+            HefRecordHeader *rh;
+
+            if (!buffer)
+                continue;
+
+            if (hef_bucket_read_record(hf, offset, j, buffer) != HEF_OK)
+            {
+                free(buffer);
+                continue;
+            }
+
+            rh = (HefRecordHeader *)buffer;
+
+            if (rh->in_use && !rh->deleted)
+            {
+                fprintf(out, "    [%u] key=%s\n", j, rh->key);
+            }
+
+            free(buffer);
+        }
+    }
+
+    free(visitados);
+
+    fclose(out);
+    return HEF_OK;
+}

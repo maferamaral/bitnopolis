@@ -300,6 +300,17 @@ int main(int argc, char **argv)
         printf("TXT QRY gerado: %s\n", caminho_txt_qry);
         printf("SVG QRY gerado: %s\n", caminho_svg_qry);
     }
+    char caminho_hfd_quadras[PATH_MAX_LEN];
+    char caminho_hfd_habitantes[PATH_MAX_LEN];
+
+    juntar_caminho(caminho_hfd_quadras, sizeof(caminho_hfd_quadras),
+                   params.dir_saida, "quadras.hfd");
+
+    juntar_caminho(caminho_hfd_habitantes, sizeof(caminho_hfd_habitantes),
+                   params.dir_saida, "habitantes.hfd");
+
+    hef_dump(hf_quadras, caminho_hfd_quadras);
+    hef_dump(hf_habitantes, caminho_hfd_habitantes);
 
     st = hef_close(&hf_habitantes);
     if (st != HEF_OK)

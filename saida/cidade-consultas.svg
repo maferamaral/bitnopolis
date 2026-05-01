@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" version="1.1">
-<rect x="270.00" y="65.00" width="10" height="10" fill="red" stroke="black" />
-<text x="271.00" y="71.00" font-size="4" fill="white">111</text>
-<circle cx="170.00" cy="70.00" r="5" fill="black" />
-<line x1="96.00" y1="136.00" x2="104.00" y2="144.00" stroke="red" stroke-width="2" />
-<line x1="96.00" y1="144.00" x2="104.00" y2="136.00" stroke="red" stroke-width="2" />
-</svg>
