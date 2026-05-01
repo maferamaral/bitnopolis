@@ -1,5 +1,7 @@
 #include "../include/extensible_hash_file.h"
 #include "../include/geo.h"
+#include "../include/pm.h"
+#include "../include/qry.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -157,7 +159,8 @@ static void montar_saida_svg_base(char *dest, size_t tam, const Parametros *p)
     char nome[NAME_MAX_LEN];
 
     obter_nome_base(base, sizeof(base), p->arq_geo);
-    snprintf(nome, sizeof(nome), "%s.svg", base);
+    base[sizeof(nome) - sizeof(".svg")] = '\0';
+    snprintf(nome, sizeof(nome), "%.250s.svg", base);
     juntar_caminho(dest, tam, p->dir_saida, nome);
 }
 
@@ -221,7 +224,7 @@ int main(int argc, char **argv)
      */
     st = hef_create(caminho_habitantes_hf,
                     4,
-                    sizeof(int),
+                    (uint32_t)pm_habitante_record_size(),
                     1,
                     &hf_habitantes);
 
@@ -244,24 +247,58 @@ int main(int argc, char **argv)
 
     if (params.tem_pm)
     {
+        int pm_status;
+
         juntar_caminho(caminho_pm, sizeof(caminho_pm), params.dir_entrada, params.arq_pm);
 
-        /*
-         * Proxima etapa:
-         * processar_pm(caminho_pm, hf_habitantes, hf_quadras);
-         */
-        printf("Arquivo .pm informado: %s\n", caminho_pm);
+        pm_status = processar_pm(caminho_pm, hf_habitantes, hf_quadras);
+
+        if (pm_status != PM_OK)
+        {
+            fprintf(stderr, "Erro ao processar arquivo .pm: codigo %d\n", pm_status);
+            hef_close(&hf_habitantes);
+            hef_close(&hf_quadras);
+            return EXIT_FAILURE;
+        }
     }
 
     if (params.tem_qry)
     {
+        char caminho_txt_qry[PATH_MAX_LEN];
+        char caminho_svg_qry[PATH_MAX_LEN];
+        char base_geo[NAME_MAX_LEN];
+        char base_qry[NAME_MAX_LEN];
+        char nome_txt[NAME_MAX_LEN];
+        char nome_svg[NAME_MAX_LEN];
+        int qry_status;
+
         juntar_caminho(caminho_qry, sizeof(caminho_qry), params.dir_entrada, params.arq_qry);
 
-        /*
-         * Proxima etapa:
-         * processar_qry(caminho_qry, hf_quadras, hf_habitantes, ...);
-         */
-        printf("Arquivo .qry informado: %s\n", caminho_qry);
+        obter_nome_base(base_geo, sizeof(base_geo), params.arq_geo);
+        obter_nome_base(base_qry, sizeof(base_qry), params.arq_qry);
+
+        snprintf(nome_txt, sizeof(nome_txt), "%.120s-%.120s.txt", base_geo, base_qry);
+        snprintf(nome_svg, sizeof(nome_svg), "%.120s-%.120s.svg", base_geo, base_qry);
+
+        juntar_caminho(caminho_txt_qry, sizeof(caminho_txt_qry), params.dir_saida, nome_txt);
+        juntar_caminho(caminho_svg_qry, sizeof(caminho_svg_qry), params.dir_saida, nome_svg);
+
+        qry_status = processar_qry(caminho_qry,
+                                   hf_quadras,
+                                   hf_habitantes,
+                                   caminho_txt_qry,
+                                   caminho_svg_qry);
+
+        if (qry_status != QRY_OK)
+        {
+            fprintf(stderr, "Erro ao processar arquivo .qry: codigo %d\n", qry_status);
+            hef_close(&hf_habitantes);
+            hef_close(&hf_quadras);
+            return EXIT_FAILURE;
+        }
+
+        printf("TXT QRY gerado: %s\n", caminho_txt_qry);
+        printf("SVG QRY gerado: %s\n", caminho_svg_qry);
     }
 
     st = hef_close(&hf_habitantes);
