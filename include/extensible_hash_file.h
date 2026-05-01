@@ -23,6 +23,10 @@ extern "C"
         HEF_ERR_NO_MEMORY = -6
     } HashExtStatus;
 
+    typedef int (*HefForeachFn)(const char *key,
+                                const void *value,
+                                void *user_data);
+
     const char *hef_status_str(HashExtStatus status);
 
     HashExtStatus hef_create(const char *path,
@@ -40,6 +44,7 @@ extern "C"
     HashExtStatus hef_update(HashExtFile hf, const char *key, const void *value);
     HashExtStatus hef_remove(HashExtFile hf, const char *key, void *out_removed_value);
     HashExtStatus hef_contains(HashExtFile hf, const char *key, bool *out_contains);
+    HashExtStatus hef_foreach(HashExtFile hf, HefForeachFn callback, void *user_data);
 
     HashExtStatus hef_size(HashExtFile hf, uint32_t *out_size);
     HashExtStatus hef_value_size(HashExtFile hf, uint32_t *out_value_size);

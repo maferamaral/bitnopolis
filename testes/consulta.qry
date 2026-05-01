@@ -1,7 +1,9 @@
 h? 111
+censo
+pq cep001
 mud 111 cep003 S 25 casa9
+pq cep001
+pq cep003
+rq cep003
 h? 111
-dspj 222
-rip 333
-nasc 444 Daniel Rocha M 04/04/2004
-h? 444
+censo

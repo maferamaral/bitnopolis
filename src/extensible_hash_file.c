@@ -1150,3 +1150,105 @@ static char *hef_strdup_local(const char *src)
     memcpy(copy, src, len + 1u);
     return copy;
 }
+static int hef_offset_ja_visitado(uint64_t *visitados, uint32_t n, uint64_t offset)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++)
+    {
+        if (visitados[i] == offset)
+            return 1;
+    }
+
+    return 0;
+}
+
+HashExtStatus hef_foreach(HashExtFile hf_ptr, HefForeachFn callback, void *user_data)
+{
+    HefHandle *hf = (HefHandle *)hf_ptr;
+    uint64_t *visitados;
+    uint32_t visitados_count = 0;
+    uint8_t *record_buffer;
+    uint32_t i;
+
+    if (hf == NULL || callback == NULL)
+        return HEF_ERR_INVALID_ARG;
+
+    visitados = (uint64_t *)calloc(hf->header.bucket_count, sizeof(uint64_t));
+    if (visitados == NULL)
+        return HEF_ERR_NO_MEMORY;
+
+    record_buffer = (uint8_t *)malloc(hf->record_size);
+    if (record_buffer == NULL)
+    {
+        free(visitados);
+        return HEF_ERR_NO_MEMORY;
+    }
+
+    for (i = 0; i < hf->header.directory_entry_count; i++)
+    {
+        uint64_t bucket_offset = hf->directory[i];
+        HefBucketHeader bucket;
+        uint32_t j;
+
+        if (hef_offset_ja_visitado(visitados, visitados_count, bucket_offset))
+            continue;
+
+        if (visitados_count >= hf->header.bucket_count)
+        {
+            free(record_buffer);
+            free(visitados);
+            return HEF_ERR_CORRUPTED;
+        }
+
+        visitados[visitados_count++] = bucket_offset;
+
+        if (hef_bucket_read_header(hf, bucket_offset, &bucket) != HEF_OK)
+        {
+            free(record_buffer);
+            free(visitados);
+            return HEF_ERR_IO;
+        }
+
+        if (bucket.count > bucket.capacity || bucket.value_size != hf->header.value_size)
+        {
+            free(record_buffer);
+            free(visitados);
+            return HEF_ERR_CORRUPTED;
+        }
+
+        for (j = 0; j < bucket.count; j++)
+        {
+            HefRecordHeader *rh;
+            int cb_result;
+
+            if (hef_bucket_read_record(hf, bucket_offset, j, record_buffer) != HEF_OK)
+            {
+                free(record_buffer);
+                free(visitados);
+                return HEF_ERR_IO;
+            }
+
+            rh = (HefRecordHeader *)record_buffer;
+
+            if (rh->in_use == 1u && rh->deleted == 0u)
+            {
+                cb_result = callback(rh->key,
+                                     record_buffer + sizeof(HefRecordHeader),
+                                     user_data);
+
+                if (cb_result != 0)
+                {
+                    free(record_buffer);
+                    free(visitados);
+                    return HEF_OK;
+                }
+            }
+        }
+    }
+
+    free(record_buffer);
+    free(visitados);
+
+    return HEF_OK;
+}

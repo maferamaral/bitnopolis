@@ -30,6 +30,50 @@ typedef struct
     int vivo;
 } HabitanteRecord;
 
+typedef struct
+{
+    FILE *txt;
+    int total_habitantes;
+    int total_moradores;
+    int homens;
+    int mulheres;
+    int moradores_homens;
+    int moradores_mulheres;
+    int sem_teto;
+    int sem_teto_homens;
+    int sem_teto_mulheres;
+} CensoCtx;
+
+typedef struct
+{
+    const char *cep;
+    int n;
+    int s;
+    int l;
+    int o;
+    int total;
+} PqCtx;
+
+typedef struct
+{
+    const char *cep;
+    FILE *txt;
+    HashExtFile hf_habitantes;
+    int removidos;
+} RqCtx;
+
+static int cmd_censo(FILE *txt, HashExtFile hf_habitantes, const char *linha);
+static int cmd_pq(FILE *txt,
+                  FILE *svg,
+                  HashExtFile hf_quadras,
+                  HashExtFile hf_habitantes,
+                  const char *linha);
+static int cmd_rq(FILE *txt,
+                  FILE *svg,
+                  HashExtFile hf_quadras,
+                  HashExtFile hf_habitantes,
+                  const char *linha);
+
 static void copiar_string(char *dest, size_t tam, const char *src)
 {
     if (dest == NULL || tam == 0)
@@ -447,14 +491,12 @@ int processar_qry(const char *qry_path,
             status = cmd_dspj(txt, svg, hf_quadras, hf_habitantes, linha);
         else if (strcmp(comando, "rip") == 0)
             status = cmd_rip(txt, svg, hf_quadras, hf_habitantes, linha);
-        else if (strcmp(comando, "censo") == 0 ||
-                 strcmp(comando, "pq") == 0 ||
-                 strcmp(comando, "rq") == 0)
-        {
-            fprintf(txt, "[*] %s", linha);
-            fprintf(txt, "comando ainda depende de percorrer todos os registros do hashfile\n");
-            status = QRY_OK;
-        }
+        else if (strcmp(comando, "censo") == 0)
+            status = cmd_censo(txt, hf_habitantes, linha);
+        else if (strcmp(comando, "pq") == 0)
+            status = cmd_pq(txt, svg, hf_quadras, hf_habitantes, linha);
+        else if (strcmp(comando, "rq") == 0)
+            status = cmd_rq(txt, svg, hf_quadras, hf_habitantes, linha);
         else
         {
             fprintf(txt, "[*] %s", linha);
@@ -478,4 +520,285 @@ int processar_qry(const char *qry_path,
         status = QRY_ERR_IO;
 
     return status;
+}
+
+static double porcentagem(int parte, int total)
+{
+    if (total == 0)
+        return 0.0;
+
+    return ((double)parte * 100.0) / (double)total;
+}
+
+static int cb_censo(const char *key, const void *value, void *user_data)
+{
+    CensoCtx *ctx = (CensoCtx *)user_data;
+    const HabitanteRecord *h = (const HabitanteRecord *)value;
+
+    (void)key;
+
+    if (!h->vivo)
+        return 0;
+
+    ctx->total_habitantes++;
+
+    if (h->sexo == 'M' || h->sexo == 'm')
+        ctx->homens++;
+    else if (h->sexo == 'F' || h->sexo == 'f')
+        ctx->mulheres++;
+
+    if (h->tem_endereco)
+    {
+        ctx->total_moradores++;
+
+        if (h->sexo == 'M' || h->sexo == 'm')
+            ctx->moradores_homens++;
+        else if (h->sexo == 'F' || h->sexo == 'f')
+            ctx->moradores_mulheres++;
+    }
+    else
+    {
+        ctx->sem_teto++;
+
+        if (h->sexo == 'M' || h->sexo == 'm')
+            ctx->sem_teto_homens++;
+        else if (h->sexo == 'F' || h->sexo == 'f')
+            ctx->sem_teto_mulheres++;
+    }
+
+    return 0;
+}
+
+static int cmd_censo(FILE *txt, HashExtFile hf_habitantes, const char *linha)
+{
+    CensoCtx ctx;
+    HashExtStatus st;
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.txt = txt;
+
+    fprintf(txt, "[*] %s", linha);
+
+    st = hef_foreach(hf_habitantes, cb_censo, &ctx);
+    if (st != HEF_OK)
+    {
+        fprintf(txt, "erro ao percorrer habitantes: %s\n", hef_status_str(st));
+        return QRY_ERR_HASH;
+    }
+
+    fprintf(txt, "total de habitantes: %d\n", ctx.total_habitantes);
+    fprintf(txt, "total de moradores: %d\n", ctx.total_moradores);
+    fprintf(txt, "proporcao moradores/habitantes: %.2lf%%\n",
+            porcentagem(ctx.total_moradores, ctx.total_habitantes));
+
+    fprintf(txt, "homens: %d\n", ctx.homens);
+    fprintf(txt, "mulheres: %d\n", ctx.mulheres);
+
+    fprintf(txt, "%% habitantes homens: %.2lf%%\n",
+            porcentagem(ctx.homens, ctx.total_habitantes));
+    fprintf(txt, "%% habitantes mulheres: %.2lf%%\n",
+            porcentagem(ctx.mulheres, ctx.total_habitantes));
+
+    fprintf(txt, "%% moradores homens: %.2lf%%\n",
+            porcentagem(ctx.moradores_homens, ctx.total_moradores));
+    fprintf(txt, "%% moradores mulheres: %.2lf%%\n",
+            porcentagem(ctx.moradores_mulheres, ctx.total_moradores));
+
+    fprintf(txt, "total de sem-tetos: %d\n", ctx.sem_teto);
+    fprintf(txt, "%% sem-tetos homens: %.2lf%%\n",
+            porcentagem(ctx.sem_teto_homens, ctx.sem_teto));
+    fprintf(txt, "%% sem-tetos mulheres: %.2lf%%\n",
+            porcentagem(ctx.sem_teto_mulheres, ctx.sem_teto));
+
+    return QRY_OK;
+}
+
+static int cb_pq(const char *key, const void *value, void *user_data)
+{
+    PqCtx *ctx = (PqCtx *)user_data;
+    const HabitanteRecord *h = (const HabitanteRecord *)value;
+
+    (void)key;
+
+    if (!h->vivo)
+        return 0;
+
+    if (!h->tem_endereco)
+        return 0;
+
+    if (strcmp(h->cep, ctx->cep) != 0)
+        return 0;
+
+    ctx->total++;
+
+    switch (h->face)
+    {
+    case 'N':
+    case 'n':
+        ctx->n++;
+        break;
+    case 'S':
+    case 's':
+        ctx->s++;
+        break;
+    case 'L':
+    case 'l':
+        ctx->l++;
+        break;
+    case 'O':
+    case 'o':
+        ctx->o++;
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+static void svg_texto(FILE *svg, double x, double y, int valor)
+{
+    fprintf(svg,
+            "<text x=\"%.2lf\" y=\"%.2lf\" font-size=\"8\" fill=\"blue\">%d</text>\n",
+            x, y, valor);
+}
+
+static int cmd_pq(FILE *txt,
+                  FILE *svg,
+                  HashExtFile hf_quadras,
+                  HashExtFile hf_habitantes,
+                  const char *linha)
+{
+    char cep[CEP_LEN];
+    double x, y, w, h;
+    PqCtx ctx;
+    HashExtStatus st;
+
+    if (sscanf(linha, "%*s %63s", cep) != 1)
+        return QRY_ERR_PARSE;
+
+    fprintf(txt, "[*] %s", linha);
+
+    if (buscar_quadra(hf_quadras, cep, &x, &y, &w, &h) != QRY_OK)
+    {
+        fprintf(txt, "quadra nao encontrada: %s\n", cep);
+        return QRY_OK;
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.cep = cep;
+
+    st = hef_foreach(hf_habitantes, cb_pq, &ctx);
+    if (st != HEF_OK)
+    {
+        fprintf(txt, "erro ao percorrer habitantes: %s\n", hef_status_str(st));
+        return QRY_ERR_HASH;
+    }
+
+    fprintf(txt, "quadra: %s\n", cep);
+    fprintf(txt, "face N: %d\n", ctx.n);
+    fprintf(txt, "face S: %d\n", ctx.s);
+    fprintf(txt, "face L: %d\n", ctx.l);
+    fprintf(txt, "face O: %d\n", ctx.o);
+    fprintf(txt, "total: %d\n", ctx.total);
+
+    svg_texto(svg, x + w / 2.0, y - 3.0, ctx.n);
+    svg_texto(svg, x + w / 2.0, y + h + 10.0, ctx.s);
+    svg_texto(svg, x + w + 3.0, y + h / 2.0, ctx.l);
+    svg_texto(svg, x - 10.0, y + h / 2.0, ctx.o);
+    svg_texto(svg, x + w / 2.0, y + h / 2.0, ctx.total);
+
+    return QRY_OK;
+}
+
+static void svg_x_vermelho(FILE *svg, double x, double y)
+{
+    fprintf(svg,
+            "<line x1=\"%.2lf\" y1=\"%.2lf\" x2=\"%.2lf\" y2=\"%.2lf\" stroke=\"red\" stroke-width=\"2\" />\n",
+            x - 6, y - 6, x + 6, y + 6);
+    fprintf(svg,
+            "<line x1=\"%.2lf\" y1=\"%.2lf\" x2=\"%.2lf\" y2=\"%.2lf\" stroke=\"red\" stroke-width=\"2\" />\n",
+            x - 6, y + 6, x + 6, y - 6);
+}
+
+static int cb_rq(const char *key, const void *value, void *user_data)
+{
+    RqCtx *ctx = (RqCtx *)user_data;
+    HabitanteRecord h;
+
+    (void)key;
+
+    memcpy(&h, value, sizeof(HabitanteRecord));
+
+    if (!h.vivo)
+        return 0;
+
+    if (!h.tem_endereco)
+        return 0;
+
+    if (strcmp(h.cep, ctx->cep) != 0)
+        return 0;
+
+    fprintf(ctx->txt, "%s %s %s\n", h.cpf, h.nome, h.sobrenome);
+
+    h.tem_endereco = 0;
+    h.cep[0] = '\0';
+    h.face = '\0';
+    h.num = 0;
+    h.compl[0] = '\0';
+
+    hef_update(ctx->hf_habitantes, h.cpf, &h);
+    ctx->removidos++;
+
+    return 0;
+}
+
+static int cmd_rq(FILE *txt,
+                  FILE *svg,
+                  HashExtFile hf_quadras,
+                  HashExtFile hf_habitantes,
+                  const char *linha)
+{
+    char cep[CEP_LEN];
+    double x, y, w, h;
+    RqCtx ctx;
+    HashExtStatus st;
+
+    if (sscanf(linha, "%*s %63s", cep) != 1)
+        return QRY_ERR_PARSE;
+
+    fprintf(txt, "[*] %s", linha);
+
+    if (buscar_quadra(hf_quadras, cep, &x, &y, &w, &h) != QRY_OK)
+    {
+        fprintf(txt, "quadra nao encontrada: %s\n", cep);
+        return QRY_OK;
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.cep = cep;
+    ctx.txt = txt;
+    ctx.hf_habitantes = hf_habitantes;
+
+    fprintf(txt, "moradores removidos da quadra %s:\n", cep);
+
+    st = hef_foreach(hf_habitantes, cb_rq, &ctx);
+    if (st != HEF_OK)
+    {
+        fprintf(txt, "erro ao percorrer habitantes: %s\n", hef_status_str(st));
+        return QRY_ERR_HASH;
+    }
+
+    st = hef_remove(hf_quadras, cep, NULL);
+    if (st != HEF_OK && st != HEF_ERR_NOT_FOUND)
+    {
+        fprintf(txt, "erro ao remover quadra: %s\n", hef_status_str(st));
+        return QRY_ERR_HASH;
+    }
+
+    fprintf(txt, "total de moradores transformados em sem-teto: %d\n", ctx.removidos);
+
+    svg_x_vermelho(svg, x + w, y + h);
+
+    return QRY_OK;
 }
