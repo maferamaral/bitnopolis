@@ -5,25 +5,27 @@ CSEC := -fstack-protector-all
 CWARN := -Wall -Wextra -Werror=implicit-function-declaration
 CDBG := -ggdb -O0
 
-CFLAGS := $(CSTD) $(CSEC) $(CWARN) $(CDBG)
+CFLAGS := $(CSTD) -DUNITY_INCLUDE_DOUBLE $(CSEC) $(CWARN) $(CDBG)
 LDFLAGS := $(CSEC)
 
-UNITY_DIR := Unity
-HASH_DIR := extensible_hash_file
+UNITY_DIR := unity
+SRC_DIR := src
+INCLUDE_DIR := include
+TEST_DIR := tst
 
-INCLUDES := -I$(UNITY_DIR) -I$(HASH_DIR)
+INCLUDES := -I$(UNITY_DIR) -I$(INCLUDE_DIR)
 
 PROJ_NAME := ted
 
 TED_SRCS ?=
 TED_OBJS := $(TED_SRCS:.c=.o)
 
-HASH_MODULE_SRC := $(HASH_DIR)/extensible_hash_file.c
-HASH_MODULE_HDR := $(HASH_DIR)/extensible_hash_file.h
-HASH_MODULE_OBJ := $(HASH_DIR)/extensible_hash_file.o
+HASH_MODULE_SRC := $(SRC_DIR)/extensible_hash_file.c
+HASH_MODULE_HDR := $(INCLUDE_DIR)/extensible_hash_file.h
+HASH_MODULE_OBJ := $(SRC_DIR)/extensible_hash_file.o
 
-HASH_TEST_SRC := $(HASH_DIR)/t_extensible_hash_file.c
-HASH_TEST_BIN := $(HASH_DIR)/t_extensible_hash_file
+HASH_TEST_SRC := $(TEST_DIR)/t_extensible_hash_file.c
+HASH_TEST_BIN := $(TEST_DIR)/t_extensible_hash_file
 UNITY_SRC := $(UNITY_DIR)/unity.c
 UNITY_HDRS := $(UNITY_DIR)/unity.h $(UNITY_DIR)/unity_internals.h
 UNITY_OBJ := $(UNITY_DIR)/unity.o

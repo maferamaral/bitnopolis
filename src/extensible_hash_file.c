@@ -77,6 +77,8 @@ static HashExtStatus hef_bucket_compact_remove(HefHandle *hf,
                                                uint64_t bucket_offset,
                                                uint32_t slot,
                                                void *out_removed_value);
+static HashExtStatus hef_validate_header(const HefFileHeader *header);
+static void hef_destroy_handle(HefHandle *hf);
 static char *hef_strdup_local(const char *src);
 
 const char *hef_status_str(HashExtStatus status)
@@ -109,11 +111,12 @@ HashExtStatus hef_create(const char *path,
                          HashExtFile *out_hf)
 {
     HefHandle *hf = NULL;
-    FILE *fp = NULL;
     uint32_t directory_entry_count;
     uint32_t i;
 
-    if (path == NULL || out_hf == NULL || bucket_capacity == 0u || value_size == 0u || initial_global_depth > 20u)
+    if (path == NULL || out_hf == NULL || bucket_capacity == 0u || value_size == 0u ||
+        initial_global_depth > HEF_MAX_GLOBAL_DEPTH ||
+        value_size > (UINT32_MAX - (uint32_t)sizeof(HefRecordHeader)))
     {
         return HEF_ERR_INVALID_ARG;
     }
@@ -130,7 +133,7 @@ HashExtStatus hef_create(const char *path,
     hf->path = hef_strdup_local(path);
     if (hf->path == NULL)
     {
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_NO_MEMORY;
     }
 
@@ -138,21 +141,17 @@ HashExtStatus hef_create(const char *path,
     hf->directory = (uint64_t *)calloc(directory_entry_count, sizeof(uint64_t));
     if (hf->directory == NULL)
     {
-        free(hf->path);
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_NO_MEMORY;
     }
 
-    fp = fopen(path, "w+b");
-    if (fp == NULL)
+    hf->fp = fopen(path, "w+b");
+    if (hf->fp == NULL)
     {
-        free(hf->directory);
-        free(hf->path);
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_IO;
     }
 
-    hf->fp = fp;
     hf->header.magic = HEF_MAGIC;
     hf->header.version = HEF_VERSION;
     hf->header.bucket_capacity = bucket_capacity;
@@ -166,10 +165,7 @@ HashExtStatus hef_create(const char *path,
 
     if (hef_write_header(hf) != HEF_OK || hef_write_directory(hf) != HEF_OK)
     {
-        fclose(fp);
-        free(hf->directory);
-        free(hf->path);
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_IO;
     }
 
@@ -179,21 +175,15 @@ HashExtStatus hef_create(const char *path,
         HashExtStatus st = hef_allocate_bucket(hf, initial_global_depth, &bucket_offset);
         if (st != HEF_OK)
         {
-            fclose(fp);
-            free(hf->directory);
-            free(hf->path);
-            free(hf);
+            hef_destroy_handle(hf);
             return st;
         }
         hf->directory[i] = bucket_offset;
     }
 
-    if (hef_write_directory(hf) != HEF_OK || hef_write_header(hf) != HEF_OK || fflush(fp) != 0)
+    if (hef_flush(hf) != HEF_OK)
     {
-        fclose(fp);
-        free(hf->directory);
-        free(hf->path);
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_IO;
     }
 
@@ -226,38 +216,32 @@ HashExtStatus hef_open(const char *path, HashExtFile *out_hf)
         return HEF_ERR_NO_MEMORY;
     }
 
+    hf->fp = fp;
     hf->path = hef_strdup_local(path);
     if (hf->path == NULL)
     {
-        fclose(fp);
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_NO_MEMORY;
     }
 
-    hf->fp = fp;
     if (fseek(fp, 0L, SEEK_SET) != 0 || fread(&hf->header, sizeof(HefFileHeader), 1u, fp) != 1u)
     {
-        fclose(fp);
-        free(hf->path);
-        free(hf);
+        hef_destroy_handle(hf);
         return HEF_ERR_IO;
     }
 
-    if (hf->header.magic != HEF_MAGIC || hf->header.version != HEF_VERSION || hf->header.bucket_capacity == 0u || hf->header.value_size == 0u)
+    st = hef_validate_header(&hf->header);
+    if (st != HEF_OK)
     {
-        fclose(fp);
-        free(hf->path);
-        free(hf);
-        return HEF_ERR_CORRUPTED;
+        hef_destroy_handle(hf);
+        return st;
     }
 
     hf->record_size = sizeof(HefRecordHeader) + hf->header.value_size;
     st = hef_load_directory(hf);
     if (st != HEF_OK)
     {
-        fclose(fp);
-        free(hf->path);
-        free(hf);
+        hef_destroy_handle(hf);
         return st;
     }
 
@@ -268,6 +252,7 @@ HashExtStatus hef_open(const char *path, HashExtFile *out_hf)
 HashExtStatus hef_close(HashExtFile *io_hf)
 {
     HefHandle *hf;
+    HashExtStatus st = HEF_OK;
 
     if (io_hf == NULL)
     {
@@ -282,22 +267,26 @@ HashExtStatus hef_close(HashExtFile *io_hf)
 
     if (hef_flush(hf) != HEF_OK)
     {
-        return HEF_ERR_IO;
+        st = HEF_ERR_IO;
+    }
+    if (hf->fp != NULL && fclose(hf->fp) != 0)
+    {
+        st = HEF_ERR_IO;
     }
 
-    fclose(hf->fp);
+    hf->fp = NULL;
     free(hf->directory);
     free(hf->path);
     free(hf);
     *io_hf = NULL;
-    return HEF_OK;
+    return st;
 }
 
 HashExtStatus hef_flush(HashExtFile hf_ptr)
 {
     HefHandle *hf = (HefHandle *)hf_ptr;
 
-    if (hf == NULL)
+    if (hf == NULL || hf->fp == NULL || hf->directory == NULL)
     {
         return HEF_ERR_INVALID_ARG;
     }
@@ -749,7 +738,7 @@ static HashExtStatus hef_double_directory(HefHandle *hf)
     uint64_t *new_directory;
     uint32_t i;
 
-    if (new_count < old_count)
+    if (hf->header.global_depth >= HEF_MAX_GLOBAL_DEPTH || new_count < old_count)
     {
         return HEF_ERR_CORRUPTED;
     }
@@ -773,21 +762,64 @@ static HashExtStatus hef_double_directory(HefHandle *hf)
 
 static HashExtStatus hef_split_bucket(HefHandle *hf, uint32_t directory_index)
 {
-    uint64_t old_bucket_offset = hf->directory[directory_index];
+    uint64_t old_bucket_offset;
     HefBucketHeader old_bucket;
-    HefBucketHeader new_bucket_header;
     uint64_t new_bucket_offset;
     uint8_t *record_buffer;
-    uint8_t *values_blob;
-    char *keys_blob;
+    uint8_t *records_blob;
     uint32_t record_count;
+    uint32_t new_local_depth;
     uint32_t i;
     HashExtStatus st;
 
+    if (hf == NULL || directory_index >= hf->header.directory_entry_count)
+    {
+        return HEF_ERR_INVALID_ARG;
+    }
+
+    old_bucket_offset = hf->directory[directory_index];
     st = hef_bucket_read_header(hf, old_bucket_offset, &old_bucket);
     if (st != HEF_OK)
     {
         return st;
+    }
+
+    if (old_bucket.count > old_bucket.capacity ||
+        old_bucket.capacity != hf->header.bucket_capacity ||
+        old_bucket.value_size != hf->header.value_size ||
+        old_bucket.record_stride != (uint32_t)hf->record_size ||
+        old_bucket.local_depth > hf->header.global_depth ||
+        old_bucket.local_depth >= HEF_MAX_GLOBAL_DEPTH)
+    {
+        return HEF_ERR_CORRUPTED;
+    }
+
+    record_count = old_bucket.count;
+    record_buffer = (uint8_t *)calloc(1u, hf->record_size);
+    records_blob = NULL;
+    if (record_count > 0u)
+    {
+        records_blob = (uint8_t *)malloc((size_t)record_count * hf->record_size);
+    }
+    if (record_buffer == NULL || (record_count > 0u && records_blob == NULL))
+    {
+        free(record_buffer);
+        free(records_blob);
+        return HEF_ERR_NO_MEMORY;
+    }
+
+    for (i = 0u; i < record_count; ++i)
+    {
+        st = hef_bucket_read_record(hf,
+                                    old_bucket_offset,
+                                    i,
+                                    records_blob + ((size_t)i * hf->record_size));
+        if (st != HEF_OK)
+        {
+            free(record_buffer);
+            free(records_blob);
+            return st;
+        }
     }
 
     if (old_bucket.local_depth == hf->header.global_depth)
@@ -795,117 +827,94 @@ static HashExtStatus hef_split_bucket(HefHandle *hf, uint32_t directory_index)
         st = hef_double_directory(hf);
         if (st != HEF_OK)
         {
+            free(record_buffer);
+            free(records_blob);
             return st;
         }
     }
 
-    st = hef_allocate_bucket(hf, old_bucket.local_depth + 1u, &new_bucket_offset);
+    new_local_depth = old_bucket.local_depth + 1u;
+    st = hef_allocate_bucket(hf, new_local_depth, &new_bucket_offset);
     if (st != HEF_OK)
     {
+        free(record_buffer);
+        free(records_blob);
         return st;
     }
 
-    record_buffer = (uint8_t *)malloc(hf->record_size);
-    keys_blob = (char *)calloc(old_bucket.count, HEF_MAX_KEY_LEN + 1u);
-    values_blob = (uint8_t *)calloc(old_bucket.count, hf->header.value_size);
-    if (record_buffer == NULL || keys_blob == NULL || values_blob == NULL)
-    {
-        free(record_buffer);
-        free(keys_blob);
-        free(values_blob);
-        return HEF_ERR_NO_MEMORY;
-    }
-
-    record_count = old_bucket.count;
-    for (i = 0u; i < record_count; ++i)
-    {
-        HefRecordHeader *rh;
-        st = hef_bucket_read_record(hf, old_bucket_offset, i, record_buffer);
-        if (st != HEF_OK)
-        {
-            free(record_buffer);
-            free(keys_blob);
-            free(values_blob);
-            return st;
-        }
-        rh = (HefRecordHeader *)record_buffer;
-        strncpy(keys_blob + ((size_t)i * (HEF_MAX_KEY_LEN + 1u)), rh->key, HEF_MAX_KEY_LEN);
-        memcpy(values_blob + ((size_t)i * hf->header.value_size), record_buffer + sizeof(HefRecordHeader), hf->header.value_size);
-    }
-
-    old_bucket.local_depth++;
+    old_bucket.local_depth = new_local_depth;
     old_bucket.count = 0u;
     st = hef_bucket_write_header(hf, old_bucket_offset, &old_bucket);
     if (st != HEF_OK)
     {
         free(record_buffer);
-        free(keys_blob);
-        free(values_blob);
+        free(records_blob);
         return st;
     }
 
-    memset(record_buffer, 0, hf->record_size);
     for (i = 0u; i < old_bucket.capacity; ++i)
     {
         st = hef_bucket_write_record(hf, old_bucket_offset, i, record_buffer);
         if (st != HEF_OK)
         {
             free(record_buffer);
-            free(keys_blob);
-            free(values_blob);
+            free(records_blob);
             return st;
-        }
-    }
-
-    new_bucket_header.local_depth = old_bucket.local_depth;
-    new_bucket_header.capacity = hf->header.bucket_capacity;
-    new_bucket_header.count = 0u;
-    new_bucket_header.value_size = hf->header.value_size;
-    new_bucket_header.record_stride = (uint32_t)hf->record_size;
-    st = hef_bucket_write_header(hf, new_bucket_offset, &new_bucket_header);
-    if (st != HEF_OK)
-    {
-        free(record_buffer);
-        free(keys_blob);
-        free(values_blob);
-        return st;
-    }
-
-    for (i = 0u; i < hf->header.directory_entry_count; ++i)
-    {
-        if (hf->directory[i] == old_bucket_offset)
-        {
-            if (((i >> (old_bucket.local_depth - 1u)) & 1u) != 0u)
-            {
-                hf->directory[i] = new_bucket_offset;
-            }
         }
     }
 
     hf->header.bucket_count++;
 
+    for (i = 0u; i < hf->header.directory_entry_count; ++i)
+    {
+        if (hf->directory[i] == old_bucket_offset &&
+            (((i >> (new_local_depth - 1u)) & 1u) != 0u))
+        {
+            hf->directory[i] = new_bucket_offset;
+        }
+    }
+
     for (i = 0u; i < record_count; ++i)
     {
-        st = hef_insert_internal(hf,
-                                 keys_blob + ((size_t)i * (HEF_MAX_KEY_LEN + 1u)),
-                                 values_blob + ((size_t)i * hf->header.value_size),
-                                 false);
+        uint8_t *stored_record = records_blob + ((size_t)i * hf->record_size);
+        HefRecordHeader *record_header = (HefRecordHeader *)stored_record;
+        uint32_t target_index = hef_directory_index(hf, record_header->hash);
+        uint64_t target_offset = hf->directory[target_index];
+        HefBucketHeader target_bucket;
+
+        st = hef_bucket_read_header(hf, target_offset, &target_bucket);
         if (st != HEF_OK)
         {
             free(record_buffer);
-            free(keys_blob);
-            free(values_blob);
+            free(records_blob);
             return st;
         }
-        if (hf->header.size > 0u)
+        if (target_bucket.count >= target_bucket.capacity)
         {
-            hf->header.size--;
+            free(record_buffer);
+            free(records_blob);
+            return HEF_ERR_CORRUPTED;
+        }
+
+        st = hef_bucket_write_record(hf, target_offset, target_bucket.count, stored_record);
+        if (st != HEF_OK)
+        {
+            free(record_buffer);
+            free(records_blob);
+            return st;
+        }
+        target_bucket.count++;
+        st = hef_bucket_write_header(hf, target_offset, &target_bucket);
+        if (st != HEF_OK)
+        {
+            free(record_buffer);
+            free(records_blob);
+            return st;
         }
     }
 
     free(record_buffer);
-    free(keys_blob);
-    free(values_blob);
+    free(records_blob);
     return HEF_OK;
 }
 
@@ -919,12 +928,13 @@ static HashExtStatus hef_insert_internal(HefHandle *hf, const char *key, const v
     HefRecordHeader *record_header;
     HashExtStatus st;
 
-    if (strlen(key) > HEF_MAX_KEY_LEN)
+    if (hf == NULL || key == NULL || value == NULL || strlen(key) > HEF_MAX_KEY_LEN)
     {
         return HEF_ERR_INVALID_ARG;
     }
 
-    if (hef_find_record(hf, key, &bucket_offset, NULL, NULL, &bucket) == HEF_OK)
+    st = hef_find_record(hf, key, &bucket_offset, NULL, NULL, &bucket);
+    if (st == HEF_OK)
     {
         if (!allow_update)
         {
@@ -932,10 +942,15 @@ static HashExtStatus hef_insert_internal(HefHandle *hf, const char *key, const v
         }
         return hef_update(hf, key, value);
     }
+    if (st != HEF_ERR_NOT_FOUND)
+    {
+        return st;
+    }
+
+    hash = hef_hash_key(key);
 
     while (1)
     {
-        hash = hef_hash_key(key);
         directory_index = hef_directory_index(hf, hash);
         bucket_offset = hf->directory[directory_index];
 
@@ -943,6 +958,14 @@ static HashExtStatus hef_insert_internal(HefHandle *hf, const char *key, const v
         if (st != HEF_OK)
         {
             return st;
+        }
+        if (bucket.count > bucket.capacity ||
+            bucket.capacity != hf->header.bucket_capacity ||
+            bucket.value_size != hf->header.value_size ||
+            bucket.record_stride != (uint32_t)hf->record_size ||
+            bucket.local_depth > hf->header.global_depth)
+        {
+            return HEF_ERR_CORRUPTED;
         }
 
         if (bucket.count < bucket.capacity)
@@ -974,6 +997,11 @@ static HashExtStatus hef_insert_internal(HefHandle *hf, const char *key, const v
             }
             hf->header.size++;
             return hef_flush(hf);
+        }
+
+        if (bucket.local_depth >= HEF_MAX_GLOBAL_DEPTH)
+        {
+            return HEF_ERR_CORRUPTED;
         }
 
         st = hef_split_bucket(hf, directory_index);
@@ -1055,6 +1083,54 @@ static HashExtStatus hef_bucket_compact_remove(HefHandle *hf,
 
     bucket.count--;
     return hef_bucket_write_header(hf, bucket_offset, &bucket);
+}
+
+static HashExtStatus hef_validate_header(const HefFileHeader *header)
+{
+    uint32_t expected_directory_count;
+    uint64_t bucket_area_offset;
+
+    if (header == NULL)
+    {
+        return HEF_ERR_INVALID_ARG;
+    }
+
+    if (header->magic != HEF_MAGIC || header->version != HEF_VERSION ||
+        header->bucket_capacity == 0u || header->value_size == 0u ||
+        header->global_depth > HEF_MAX_GLOBAL_DEPTH ||
+        header->value_size > (UINT32_MAX - (uint32_t)sizeof(HefRecordHeader)))
+    {
+        return HEF_ERR_CORRUPTED;
+    }
+
+    expected_directory_count = 1u << header->global_depth;
+    bucket_area_offset = header->directory_offset + HEF_DIRECTORY_RESERVED_BYTES;
+
+    if (header->directory_entry_count != expected_directory_count ||
+        header->bucket_count == 0u ||
+        header->directory_offset != sizeof(HefFileHeader) ||
+        header->next_bucket_offset < bucket_area_offset)
+    {
+        return HEF_ERR_CORRUPTED;
+    }
+
+    return HEF_OK;
+}
+
+static void hef_destroy_handle(HefHandle *hf)
+{
+    if (hf == NULL)
+    {
+        return;
+    }
+
+    if (hf->fp != NULL)
+    {
+        (void)fclose(hf->fp);
+    }
+    free(hf->directory);
+    free(hf->path);
+    free(hf);
 }
 
 static char *hef_strdup_local(const char *src)
