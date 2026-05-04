@@ -166,6 +166,8 @@ void test_qry_rq_deve_remover_quadra_do_svg_final(void)
 
     TEST_ASSERT_FALSE(file_contains(QRY_TEST_SVG, ">b01.1<"));
     TEST_ASSERT_TRUE(file_contains(QRY_TEST_SVG, ">b01.2<"));
+    TEST_ASSERT_TRUE(file_contains(QRY_TEST_SVG, "x1=\"4.00\" y1=\"14.00\" x2=\"16.00\" y2=\"26.00\""));
+    TEST_ASSERT_TRUE(file_contains(QRY_TEST_SVG, "x1=\"4.00\" y1=\"26.00\" x2=\"16.00\" y2=\"14.00\""));
     TEST_ASSERT_EQUAL_INT(GEO_ERR_NOT_FOUND,
                           geo_buscar_quadra(g_quadras,
                                             "b01.1",

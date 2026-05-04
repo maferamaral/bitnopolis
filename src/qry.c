@@ -864,7 +864,7 @@ static int cmd_rq(FILE *txt,
 
     fprintf(txt, "total de moradores transformados em sem-teto: %d\n", ctx.removidos);
 
-    svg_x_vermelho(svg, x + w, y + h);
+    svg_x_vermelho(svg, x, y);
 
     return QRY_OK;
 }
