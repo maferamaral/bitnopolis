@@ -185,13 +185,13 @@ static void calcular_ponto_endereco(double x,
 
     case 'L':
     case 'l':
-        *px = x + w;
+        *px = x;
         *py = y + h - num;
         break;
 
     case 'O':
     case 'o':
-        *px = x;
+        *px = x + w;
         *py = y + h - num;
         break;
 
@@ -770,8 +770,8 @@ static int cmd_pq(FILE *txt,
 
     svg_texto(svg, x + w / 2.0, y - 3.0, ctx.n);
     svg_texto(svg, x + w / 2.0, y + h + 10.0, ctx.s);
-    svg_texto(svg, x + w + 3.0, y + h / 2.0, ctx.l);
-    svg_texto(svg, x - 10.0, y + h / 2.0, ctx.o);
+    svg_texto(svg, x - 10.0, y + h / 2.0, ctx.l);
+    svg_texto(svg, x + w + 3.0, y + h / 2.0, ctx.o);
     svg_texto(svg, x + w / 2.0, y + h / 2.0, ctx.total);
 
     return QRY_OK;

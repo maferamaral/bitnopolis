@@ -182,11 +182,30 @@ void test_qry_rq_deve_remover_quadra_do_svg_final(void)
                                             0u));
 }
 
+void test_qry_deve_desenhar_leste_e_oeste_invertidos_no_svg(void)
+{
+    preparar_cidade_e_habitantes();
+    write_text_file(QRY_TEST_QRY,
+                    "mud 111 b01.1 L 10 ap102\n"
+                    "mud 222 b01.2 O 10 casa\n");
+
+    TEST_ASSERT_EQUAL_INT(QRY_OK,
+                          processar_qry(QRY_TEST_QRY,
+                                        g_quadras,
+                                        g_habitantes,
+                                        QRY_TEST_TXT,
+                                        QRY_TEST_SVG));
+
+    TEST_ASSERT_TRUE(file_contains(QRY_TEST_SVG, "x=\"5.00\" y=\"45.00\""));
+    TEST_ASSERT_TRUE(file_contains(QRY_TEST_SVG, "x=\"85.00\" y=\"45.00\""));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_qry_h_deve_escrever_dados_do_habitante);
     RUN_TEST(test_qry_rip_deve_marcar_obito_e_desenhar_cruz_vermelha);
     RUN_TEST(test_qry_rq_deve_remover_quadra_do_svg_final);
+    RUN_TEST(test_qry_deve_desenhar_leste_e_oeste_invertidos_no_svg);
     return UNITY_END();
 }
