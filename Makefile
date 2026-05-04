@@ -40,6 +40,7 @@ all: ted
 
 ted: $(TED_OBJS)
 	$(CC) $(TED_OBJS) $(LDFLAGS) -o ted
+	$(CC) $(TED_OBJS) $(LDFLAGS) -o src/ted
 
 test_hash: $(TEST_HASH_BIN)
 
@@ -87,7 +88,7 @@ clean:
 	rm -f tst/*.o
 	rm -f unity/*.o
 	rm -f ted
+	rm -f src/ted
 	rm -f $(TEST_BINS)
-	rm -f saida/*.svg saida/*.txt saida/*.hf saida/*.hfd
 	rm -f *.hf *.hfd *.svg
 	rm -f tst_*.geo tst_*.pm tst_*.qry tst_*.txt tst_*.svg tst_*.hf
